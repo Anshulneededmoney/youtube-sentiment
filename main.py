@@ -1,51 +1,73 @@
 # main.py
+import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from googleapiclient.errors import HttpError
 
 from src.config import YOUTUBE_API_KEY
 from src.yt_fetch import fetch_comments
-# --- MODIFIED: Import the new functions ---
 from src.clean import filter_relevant_comments, detect_lang, translate
-from src.analysis import score_comments
+from src.analysis import score_comments # This is your LLM scoring function
 
+def get_counts(res: dict) -> list:
+    """Helper function to extract sentiment counts from a result dictionary."""
+    return [
+        len(res.get("positive", [])),
+        len(res.get("neutral", [])),
+        len(res.get("negative", [])),
+    ]
 
-def plot_results(res, outdir: Path):
-    # ... (This function remains unchanged) ...
+def plot_combined_results(results: dict, outdir: Path):
+    """
+    Plots a grouped bar chart comparing all four experimental modes.
+    """
     outdir.mkdir(parents=True, exist_ok=True)
+    
+    labels = ['Positive', 'Neutral', 'Negative']
+    modes = list(results.keys()) # ['Full', 'Naive', 'Eng-Only', 'Hin-Only']
+    
+    counts = {mode: get_counts(results[mode]) for mode in modes}
+    
+    x = np.arange(len(labels))  # the label locations
+    width = 0.2  # the width of the bars
+    
+    fig, ax = plt.subplots(figsize=(15, 8))
+    
+    # Create the bars for each mode
+    rects1 = ax.bar(x - 1.5*width, counts[modes[0]], width, label=modes[0])
+    rects2 = ax.bar(x - 0.5*width, counts[modes[1]], width, label=modes[1])
+    rects3 = ax.bar(x + 0.5*width, counts[modes[2]], width, label=modes[2])
+    rects4 = ax.bar(x + 1.5*width, counts[modes[3]], width, label=modes[3])
 
-    # Histogram of polarity
-    plt.figure()
-    plt.hist(res["polarity"], bins=21, range=(-1, 1))
-    plt.title("Comment Sentiment Polarity (VADER compound)")
-    plt.xlabel("Polarity (−1 … 1)")
-    plt.ylabel("Frequency")
-    plt.savefig(outdir / "polarity_hist.png", dpi=150, bbox_inches="tight")
+    # Add some text for labels, title and axes ticks
+    ax.set_ylabel('Number of Comments')
+    ax.set_title('Sentiment Analysis Comparison by Pipeline')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.legend(title="Pipeline Mode")
 
-    # Bar chart of class counts
-    labels = ["Positive", "Neutral", "Negative"]
-    counts = [len(res["positive"]), len(res["neutral"]), len(res["negative"])]
+    ax.bar_label(rects1, padding=3)
+    ax.bar_label(rects2, padding=3)
+    ax.bar_label(rects3, padding=3)
+    ax.bar_label(rects4, padding=3)
 
-    plt.figure()
-    plt.bar(labels, counts)
-    plt.title("Sentiment Class Counts")
-    plt.ylabel("Count")
-    plt.savefig(outdir / "class_counts.png", dpi=150, bbox_inches="tight")
-
+    fig.tight_layout()
+    
+    plt.savefig(outdir / "combined_sentiment_comparison.png", dpi=150, bbox_inches="tight")
+    print(f"\n✅ Combined comparison plot saved to {outdir}/")
     plt.show()
 
 
 def main():
     if not YOUTUBE_API_KEY:
-        print(" Missing API key. Put ⁠ YOUTUBE_API_KEY=... ⁠ in your .env and run again.")
+        print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    # 👇 ask for inputs interactively
-    video_url = "https://www.youtube.com/watch?v=WzvURhaDZqI&pp=ygUHY2FtcHVzeNIHCQkDCgGHKiGM7w%3D%3D"
-    max_comments = 2000
-    preview = 8
-
-    print("\n[1/5] Fetching comments…") # <-- Renumbered to 5 steps
+    video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Use your test URL
+    max_comments = 200
+    
+    # --- [STEP 1/3] FETCH AND CLEAN (COMMON TO ALL) ---
+    print("\n[1/3] Fetching and Cleaning Comments…")
     try:
         raw = fetch_comments(YOUTUBE_API_KEY, video_url, max_total=max_comments)
     except HttpError as e:
@@ -54,61 +76,68 @@ def main():
     except Exception as e:
         print(f" Unexpected error: {e}")
         return
-
-    print(f"    fetched: {len(raw)}")
-
-    print("[2/5] Cleaning comments…") # <-- Renumbered
+    
     cleaned = filter_relevant_comments(raw)
-    print(f"    kept: {len(cleaned)}")
-
     if not cleaned:
-        print("No usable comments after cleaning.")
+        print("No usable comments found after cleaning.")
         return
+        
+    print(f"    Fetched: {len(raw)}, Kept after cleaning: {len(cleaned)}")
 
-    # --- NEW STEP: Language Detection & Translation ---
-    print("[3/5] Translating Romanized Hindi comments…")
-    final_comments_for_analysis = []
+    # --- [STEP 2/3] RUN ALL FOUR ANALYSIS PIPELINES ---
+    print("\n[2/3] Running all four analysis pipelines…")
+    
+    all_results = {}
+    
+    # --- Mode 1: Full Pipeline (With Translation) ---
+    print("\n--- Mode 1: Full (Translate Hindi) ---")
+    full_comments = []
     hindi_count = 0
-    for comment in cleaned:
-        lang = detect_lang(comment)
+    for c in cleaned:
+        lang = detect_lang(c)
         if lang == "hindi":
             hindi_count += 1
-            # Translate Hindi comment to English
-            translated_comment = translate(comment)
-            if translated_comment: # Only add if translation was successful
-                final_comments_for_analysis.append(translated_comment)
+            full_comments.append(translate(c))
         else:
-            # Keep the English comment as is
-            final_comments_for_analysis.append(comment)
-    
-    print(f"    found and translated {hindi_count} Hindi comments.")
-    print(f"    total comments for analysis: {len(final_comments_for_analysis)}")
-    # --- END OF NEW STEP ---
+            full_comments.append(c)
+    res_full = score_comments(full_comments)
+    all_results["Full (Translate)"] = res_full
+    print(f"    Analyzed {len(full_comments)} comments ({hindi_count} translated).")
+    print(f"    Counts → +:{len(res_full['positive'])}  0:{len(res_full['neutral'])}  -:{len(res_full['negative'])}")
 
-    if not final_comments_for_analysis:
-        print("No usable comments left after translation step.")
-        return
+    # --- Mode 2: Naive Pipeline (No Translation) ---
+    print("\n--- Mode 2: Naive (No Translate) ---")
+    res_naive = score_comments(cleaned) # Analyze mixed-language list directly
+    all_results["Naive (No Translate)"] = res_naive
+    print(f"    Analyzed {len(cleaned)} comments (untranslated).")
+    print(f"    Counts → +:{len(res_naive['positive'])}  0:{len(res_naive['neutral'])}  -:{len(res_naive['negative'])}")
 
-    print("[4/5] Scoring sentiment…") # <-- Renumbered
-    # --- MODIFIED: Use the newly translated list ---
-    res = score_comments(final_comments_for_analysis)
-    avg = res["avg"]
-    label = "Positive" if avg > 0.05 else "Negative" if avg < -0.05 else "Neutral"
+    # --- Mode 3: English-Only (Filter out Hindi) ---
+    print("\n--- Mode 3: English-Only (Filter Hindi) ---")
+    eng_only_comments = []
+    for c in cleaned:
+        if detect_lang(c) == "english":
+            eng_only_comments.append(c)
+    res_eng_only = score_comments(eng_only_comments)
+    all_results["English-Only"] = res_eng_only
+    print(f"    Analyzed {len(eng_only_comments)} comments (Hindi comments ignored).")
+    print(f"    Counts → +:{len(res_eng_only['positive'])}  0:{len(res_eng_only['neutral'])}  -:{len(res_eng_only['negative'])}")
 
-    print("[5/5] Summary:") # <-- Renumbered
-    print(f"    Average polarity: {avg:.4f} → {label}")
-    print(f"    Counts → +:{len(res['positive'])}  0:{len(res['neutral'])}  -:{len(res['negative'])}")
+    # --- Mode 4: Hindi-Only (Filter out English) ---
+    print("\n--- Mode 4: Hindi-Only (Filter English) ---")
+    hin_only_comments = []
+    for c in cleaned:
+        if detect_lang(c) == "hindi":
+            hin_only_comments.append(translate(c)) # Translate the Hindi ones
+    res_hin_only = score_comments(hin_only_comments)
+    all_results["Hindi-Only (Translated)"] = res_hin_only
+    print(f"    Analyzed {len(hin_only_comments)} comments (English comments ignored).")
+    print(f"    Counts → +:{len(res_hin_only['positive'])}  0:{len(res_hin_only['neutral'])}  -:{len(res_hin_only['negative'])}")
 
-    print("\nPreview of final comments (after translation):")
-    # --- MODIFIED: Show the final translated comments ---
-    for i, c in enumerate(final_comments_for_analysis[:preview], start=1):
-        one = " ".join(c.splitlines()).strip()
-        print(f"{i:>2}. {one[:200]}")
-
-    print("\nSaving plots…")
+    # --- [STEP 3/3] PLOT COMBINED RESULTS ---
+    print("\n[3/3] Generating Combined Comparison Plot…")
     outdir = Path("outputs")
-    plot_results(res, outdir)
-    print(f"✅ Plots saved to {outdir}/")
+    plot_combined_results(all_results, outdir)
 
 
 if __name__ == "__main__":
