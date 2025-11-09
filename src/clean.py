@@ -1,6 +1,4 @@
 # src/clean.py
-!pip install -U transformers
-!pip install googletrans==3.1.0a0
 from typing import List
 import re
 import emoji
