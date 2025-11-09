@@ -1,5 +1,4 @@
 # src/clean.py
-# src/clean.py
 from typing import List
 import re
 import emoji
@@ -10,13 +9,13 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 # --- Initializations ---
 translator = Translator()
 
-# --- OPTIMIZATION 1: Set device and move model to GPU ---
+# --- Set device and move model to GPU ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Language detection model (clean.py) running on: {device}")
 
 tokenizer = AutoTokenizer.from_pretrained("papluca/xlm-roberta-base-language-detection")
 model = AutoModelForSequenceClassification.from_pretrained("papluca/xlm-roberta-base-language-detection")
-model.to(device) # Move the model to the GPU!
+model.to(device) # Move the model to the GPU
 
 
 # --- Constants ---
@@ -33,21 +32,16 @@ def normalize_text(s: str) -> str:
 
 def filter_relevant_comments(comments: List[str]) -> List[str]:
     """
-    Keep comments that have text, no links, aren't emoji-dominated,
-    AND are written in the Latin script (ASCII).
+    Keep comments that have text, no links, and aren't emoji-dominated.
+    (This version has no .isascii() filter)
     """
     kept: List[str] = []
     for c in comments:
         c2 = normalize_text(c)
         if not c2:
             continue
-        
-        # --- THIS IS THE NEW LINE ---
-        # Filter out any comment with non-Latin (non-ASCII) characters
-        # This keeps English/Romanized Hindi and filters out Devanagari, etc.
-        # if not c2.isascii():
-        #     continue
-        # --- END OF NEW LINE ---
+
+        # NO .isascii() CHECK HERE
 
         if _LINK_RE.search(c2):
             continue
@@ -62,9 +56,7 @@ def filter_relevant_comments(comments: List[str]) -> List[str]:
             kept.append(c2)
     return kept
 
-# --- (The rest of the file is unchanged) ---
 
-# --- OPTIMIZATION 2: Re-wrote detect_lang to be batched ---
 def detect_lang(comments_batch: List[str]) -> List[str]:
     """
     Compares the model's logits for Hindi (9) and English (13)
@@ -73,26 +65,32 @@ def detect_lang(comments_batch: List[str]) -> List[str]:
     if not comments_batch:
         return []
 
+    # Tokenize the entire batch at once
     inputs = tokenizer(
         comments_batch, 
         return_tensors="pt",
         truncation=True,
         max_length=512,
-        padding=True
+        padding=True  # Pad to the longest comment in the batch
     )
 
+    # Move the input tensors to the same device as the model (the GPU)
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
+    # Perform inference
     with torch.no_grad():
         outputs = model(**inputs)
 
     logits = outputs.logits
     
+    # Get probabilities for only Hindi (9) and English (13) for the whole batch
     hindi_probs = logits[:, 9]
     english_probs = logits[:, 13]
     
-    is_hindi = hindi_probs > english_probs
+    # Compare probabilities
+    is_hindi = hindi_probs > english_probs # This is a boolean Tensor
     
+    # Convert boolean tensor back to a list of strings
     labels = ["hindi" if is_h else "english" for is_h in is_hindi]
     
     return labels
