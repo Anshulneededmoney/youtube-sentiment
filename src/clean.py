@@ -45,7 +45,11 @@ def filter_relevant_comments(comments: List[str]) -> List[str]:
 def detect_lang(text_to_classify_direct: str) -> str: # will return "hindi" or "english"
 
     # Tokenize the input
-    inputs = tokenizer(text_to_classify_direct, return_tensors="pt")
+    inputs = tokenizer(text_to_classify_direct,
+                       return_tensors="pt",
+                       truncation=True,
+                       max_length=512
+                      )
 
     # Perform inference
     with torch.no_grad():
