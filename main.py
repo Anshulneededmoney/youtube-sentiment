@@ -75,7 +75,7 @@ def main():
         return
 
     video_url = "https://www.youtube.com/watch?v=ZftI2fEz0Fw&t=1s" # Use your test URL
-    max_comments = 200
+    max_comments = 1000
     
     # --- [STEP 1/3] FETCH AND CLEAN (COMMON TO ALL) ---
     print("\n[1/3] Fetching and Cleaning Comments…")
