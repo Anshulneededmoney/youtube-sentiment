@@ -1,4 +1,4 @@
-# main.py
+#main.py
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -7,7 +7,22 @@ from googleapiclient.errors import HttpError
 from src.config import YOUTUBE_API_KEY
 from src.yt_fetch import fetch_comments
 from src.clean import filter_relevant_comments, detect_lang, translate
-from src.analysis import score_comments # This is your LLM scoring function
+
+# --- 1. IMPORT BOTH SCORING FUNCTIONS ---
+try:
+    from src.analysis_roberta import score_comments as score_roberta
+    print("Successfully imported RoBERTa (multilingual) model.")
+except ImportError:
+    print("Could not import RoBERTa model.")
+    score_roberta = None
+
+try:
+    from src.analysis_distilbert import score_comments as score_distilbert
+    print("Successfully imported DistilBERT (English-only) model.")
+except ImportError:
+    print("Could not import DistilBERT model.")
+    score_distilbert = None
+
 
 def get_counts(res: dict) -> list:
     """Helper function to extract sentiment counts from a result dictionary."""
@@ -16,7 +31,8 @@ def get_counts(res: dict) -> list:
         len(res.get("neutral", [])),
         len(res.get("negative", [])),
     ]
-def plot_combined_results(results: dict, outdir: Path):
+
+def plot_combined_results(results: dict, outdir: Path, title: str, filename: str):
     """
     Plots a grouped bar chart comparing all four experimental modes
     using RATIOS instead of raw counts.
@@ -24,7 +40,7 @@ def plot_combined_results(results: dict, outdir: Path):
     outdir.mkdir(parents=True, exist_ok=True)
     
     labels = ['Positive', 'Neutral', 'Negative']
-    modes = list(results.keys()) # ['Full (Translate)', 'Naive (No Translate)', ...]
+    modes = list(results.keys())
     
     # Calculate ratios
     ratios = {}
@@ -32,52 +48,96 @@ def plot_combined_results(results: dict, outdir: Path):
         counts = get_counts(results[mode])
         total = sum(counts)
         if total == 0:
-            ratios[mode] = [0.0, 0.0, 0.0] # Avoid division by zero
+            ratios[mode] = [0.0, 0.0, 0.0]
         else:
-            ratios[mode] = [c / total for c in counts] # Normalize counts
+            ratios[mode] = [c / total for c in counts]
     
-    x = np.arange(len(labels))  # the label locations
-    width = 0.2  # the width of the bars
+    x = np.arange(len(labels))
+    width = 0.2
     
     fig, ax = plt.subplots(figsize=(15, 8))
     
-    # Create the bars for each mode using the ratio data
-    rects1 = ax.bar(x - 1.5*width, ratios[modes[0]], width, label=modes[0])
-    rects2 = ax.bar(x - 0.5*width, ratios[modes[1]], width, label=modes[1])
-    rects3 = ax.bar(x + 0.5*width, ratios[modes[2]], width, label=modes[2])
-    rects4 = ax.bar(x + 1.5*width, ratios[modes[3]], width, label=modes[3])
+    # Create the bars
+    rects = []
+    bar_positions = [-1.5, -0.5, 0.5, 1.5]
+    for i, mode in enumerate(modes):
+        r = ax.bar(x + bar_positions[i]*width, ratios[mode], width, label=mode)
+        rects.append(r)
 
-    # Add some text for labels, title and axes ticks
     ax.set_ylabel('Ratio of Comments (0.0 to 1.0)')
-    ax.set_title('Normalized Sentiment Analysis Comparison by Pipeline')
+    # --- 2. USE DYNAMIC TITLE ---
+    ax.set_title(f'Normalized Sentiment Comparison: {title}')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend(title="Pipeline Mode")
-
-    # Set y-axis to be from 0 to 1 (for ratios)
     ax.set_ylim(0, 1.0) 
 
-    # Format bar labels as percentages
-    ax.bar_label(rects1, padding=3, fmt='%.2f')
-    ax.bar_label(rects2, padding=3, fmt='%.2f')
-    ax.bar_label(rects3, padding=3, fmt='%.2f')
-    ax.bar_label(rects4, padding=3, fmt='%.2f')
+    for r in rects:
+        ax.bar_label(r, padding=3, fmt='%.2f')
 
     fig.tight_layout()
     
-    plt.savefig(outdir / "combined_sentiment_comparison_RATIO.png", dpi=150, bbox_inches="tight")
-    print(f"\n✅ Combined ratio comparison plot saved to {outdir}/")
+    # --- 3. USE DYNAMIC FILENAME ---
+    plt.savefig(outdir / filename, dpi=150, bbox_inches="tight")
+    print(f"\n✅ Comparison plot saved to {outdir / filename}")
     plt.show()
+
+
+def run_all_scenarios(scoring_function, cleaned_comments):
+    """
+    A helper function to run the 4 analysis scenarios
+    using the provided scoring_function.
+    """
+    all_results = {}
+
+    # --- Mode 1: Full Pipeline (With Translation) ---
+    print("\n--- Mode 1: Full (Translate Hindi) ---")
+    full_comments = []
+    hindi_count = 0
+    for c in cleaned_comments:
+        lang = detect_lang(c)
+        if lang == "hindi":
+            hindi_count += 1
+            full_comments.append(translate(c))
+        else:
+            full_comments.append(c)
+    res_full = scoring_function(full_comments)
+    all_results["Full (Translate)"] = res_full
+    print(f"    Analyzed {len(full_comments)} comments ({hindi_count} translated).")
+
+    # --- Mode 2: Naive Pipeline (No Translation) ---
+    print("\n--- Mode 2: Naive (No Translate) ---")
+    res_naive = scoring_function(cleaned_comments)
+    all_results["Naive (No Translate)"] = res_naive
+    print(f"    Analyzed {len(cleaned_comments)} comments (untranslated).")
+
+    # --- Mode 3: English-Only (Filter out Hindi) ---
+    print("\n--- Mode 3: English-Only (Filter Hindi) ---")
+    eng_only_comments = [c for c in cleaned_comments if detect_lang(c) == "english"]
+    res_eng_only = scoring_function(eng_only_comments)
+    all_results["English-Only"] = res_eng_only
+    print(f"    Analyzed {len(eng_only_comments)} comments (Hindi comments ignored).")
+
+    # --- Mode 4: Hindi-Only (Filter out English) ---
+    print("\n--- Mode 4: Hindi-Only (Filter English) ---")
+    hin_only_comments = [translate(c) for c in cleaned_comments if detect_lang(c) == "hindi"]
+    res_hin_only = scoring_function(hin_only_comments)
+    all_results["Hindi-Only (Translated)"] = res_hin_only
+    print(f"    Analyzed {len(hin_only_comments)} comments (English comments ignored).")
+    
+    return all_results
+
 
 def main():
     if not YOUTUBE_API_KEY:
         print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    video_url = "https://www.youtube.com/watch?v=ZftI2fEz0Fw&t=1s" # Use your test URL
-    max_comments = 1000
+    video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Use your test URL
+    max_comments = 200
+    outdir = Path("outputs")
     
-    # --- [STEP 1/3] FETCH AND CLEAN (COMMON TO ALL) ---
+    # --- [STEP 1/3] FETCH AND CLEAN (Run once) ---
     print("\n[1/3] Fetching and Cleaning Comments…")
     try:
         raw = fetch_comments(YOUTUBE_API_KEY, video_url, max_total=max_comments)
@@ -92,63 +152,25 @@ def main():
     if not cleaned:
         print("No usable comments found after cleaning.")
         return
-        
     print(f"    Fetched: {len(raw)}, Kept after cleaning: {len(cleaned)}")
 
-    # --- [STEP 2/3] RUN ALL FOUR ANALYSIS PIPELINES ---
-    print("\n[2/3] Running all four analysis pipelines…")
+    # --- [STEP 2/3] RUN EXPERIMENTS FOR MODEL 1 (ROBERTA) ---
+    if score_roberta:
+        print("\n" + "="*50)
+        print("   RUNNING EXPERIMENTS FOR RoBERTa (Multilingual)")
+        print("="*50)
+        roberta_results = run_all_scenarios(score_roberta, cleaned)
+        plot_combined_results(roberta_results, outdir, 
+                              "RoBERTa (Multilingual)", "comparison_roberta_ratio.png")
     
-    all_results = {}
-    
-    # --- Mode 1: Full Pipeline (With Translation) ---
-    print("\n--- Mode 1: Full (Translate Hindi) ---")
-    full_comments = []
-    hindi_count = 0
-    for c in cleaned:
-        lang = detect_lang(c)
-        if lang == "hindi":
-            hindi_count += 1
-            full_comments.append(translate(c))
-        else:
-            full_comments.append(c)
-    res_full = score_comments(full_comments)
-    all_results["Full (Translate)"] = res_full
-    print(f"    Analyzed {len(full_comments)} comments ({hindi_count} translated).")
-    print(f"    Counts → +:{len(res_full['positive'])}  0:{len(res_full['neutral'])}  -:{len(res_full['negative'])}")
-
-    # --- Mode 2: Naive Pipeline (No Translation) ---
-    print("\n--- Mode 2: Naive (No Translate) ---")
-    res_naive = score_comments(cleaned) # Analyze mixed-language list directly
-    all_results["Naive (No Translate)"] = res_naive
-    print(f"    Analyzed {len(cleaned)} comments (untranslated).")
-    print(f"    Counts → +:{len(res_naive['positive'])}  0:{len(res_naive['neutral'])}  -:{len(res_naive['negative'])}")
-
-    # --- Mode 3: English-Only (Filter out Hindi) ---
-    print("\n--- Mode 3: English-Only (Filter Hindi) ---")
-    eng_only_comments = []
-    for c in cleaned:
-        if detect_lang(c) == "english":
-            eng_only_comments.append(c)
-    res_eng_only = score_comments(eng_only_comments)
-    all_results["English-Only"] = res_eng_only
-    print(f"    Analyzed {len(eng_only_comments)} comments (Hindi comments ignored).")
-    print(f"    Counts → +:{len(res_eng_only['positive'])}  0:{len(res_eng_only['neutral'])}  -:{len(res_eng_only['negative'])}")
-
-    # --- Mode 4: Hindi-Only (Filter out English) ---
-    print("\n--- Mode 4: Hindi-Only (Filter English) ---")
-    hin_only_comments = []
-    for c in cleaned:
-        if detect_lang(c) == "hindi":
-            hin_only_comments.append(translate(c)) # Translate the Hindi ones
-    res_hin_only = score_comments(hin_only_comments)
-    all_results["Hindi-Only (Translated)"] = res_hin_only
-    print(f"    Analyzed {len(hin_only_comments)} comments (English comments ignored).")
-    print(f"    Counts → +:{len(res_hin_only['positive'])}  0:{len(res_hin_only['neutral'])}  -:{len(res_hin_only['negative'])}")
-
-    # --- [STEP 3/3] PLOT COMBINED RESULTS ---
-    print("\n[3/3] Generating Combined Comparison Plot…")
-    outdir = Path("outputs")
-    plot_combined_results(all_results, outdir)
+    # --- [STEP 3/3] RUN EXPERIMENTS FOR MODEL 2 (DISTILBERT) ---
+    if score_distilbert:
+        print("\n" + "="*50)
+        print("   RUNNING EXPERIMENTS FOR DistilBERT (English-Only)")
+        print("="*50)
+        distilbert_results = run_all_scenarios(score_distilbert, cleaned)
+        plot_combined_results(distilbert_results, outdir, 
+                               "DistilBERT (English-Only)", "comparison_distilbert_ratio.png")
 
 
 if __name__ == "__main__":
