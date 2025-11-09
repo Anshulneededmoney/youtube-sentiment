@@ -63,7 +63,7 @@ def main():
         print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Use your test URL
+    video_url = "https://www.youtube.com/watch?v=ZftI2fEz0Fw&t=1s" # Use your test URL
     max_comments = 200
     
     # --- [STEP 1/3] FETCH AND CLEAN (COMMON TO ALL) ---
