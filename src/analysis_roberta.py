@@ -3,18 +3,19 @@ from typing import Dict, List
 from transformers import pipeline
 import torch
 
-# --- NEW: Initialize the LLM pipeline ---
+# --- 1. Initialize the MULTILINGUAL (RoBERTa) pipeline ---
 # Check if a GPU is available, otherwise use CPU
 device = 0 if torch.cuda.is_available() else -1
 print(f"Device set to use {'cuda:0' if device == 0 else 'cpu'}")
 
-# Load the fine-tuned RoBERTa model
-# This will download the model the first time it's run
+print("Loading multilingual sentiment model (cardiffnlp/twitter-roberta-base-sentiment-latest)...")
+# This model is smart and understands Romanized Hindi
 pipe = pipeline(
     "sentiment-analysis", 
     model="cardiffnlp/twitter-roberta-base-sentiment-latest",
     device=device
 )
+print("Multilingual model loaded.")
 
 def score_comments(comments: List[str]) -> Dict[str, object]:
     """
