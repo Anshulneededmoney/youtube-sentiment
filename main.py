@@ -16,47 +16,58 @@ def get_counts(res: dict) -> list:
         len(res.get("neutral", [])),
         len(res.get("negative", [])),
     ]
-
 def plot_combined_results(results: dict, outdir: Path):
     """
-    Plots a grouped bar chart comparing all four experimental modes.
+    Plots a grouped bar chart comparing all four experimental modes
+    using RATIOS instead of raw counts.
     """
     outdir.mkdir(parents=True, exist_ok=True)
     
     labels = ['Positive', 'Neutral', 'Negative']
-    modes = list(results.keys()) # ['Full', 'Naive', 'Eng-Only', 'Hin-Only']
+    modes = list(results.keys()) # ['Full (Translate)', 'Naive (No Translate)', ...]
     
-    counts = {mode: get_counts(results[mode]) for mode in modes}
+    # Calculate ratios
+    ratios = {}
+    for mode in modes:
+        counts = get_counts(results[mode])
+        total = sum(counts)
+        if total == 0:
+            ratios[mode] = [0.0, 0.0, 0.0] # Avoid division by zero
+        else:
+            ratios[mode] = [c / total for c in counts] # Normalize counts
     
     x = np.arange(len(labels))  # the label locations
     width = 0.2  # the width of the bars
     
     fig, ax = plt.subplots(figsize=(15, 8))
     
-    # Create the bars for each mode
-    rects1 = ax.bar(x - 1.5*width, counts[modes[0]], width, label=modes[0])
-    rects2 = ax.bar(x - 0.5*width, counts[modes[1]], width, label=modes[1])
-    rects3 = ax.bar(x + 0.5*width, counts[modes[2]], width, label=modes[2])
-    rects4 = ax.bar(x + 1.5*width, counts[modes[3]], width, label=modes[3])
+    # Create the bars for each mode using the ratio data
+    rects1 = ax.bar(x - 1.5*width, ratios[modes[0]], width, label=modes[0])
+    rects2 = ax.bar(x - 0.5*width, ratios[modes[1]], width, label=modes[1])
+    rects3 = ax.bar(x + 0.5*width, ratios[modes[2]], width, label=modes[2])
+    rects4 = ax.bar(x + 1.5*width, ratios[modes[3]], width, label=modes[3])
 
     # Add some text for labels, title and axes ticks
-    ax.set_ylabel('Number of Comments')
-    ax.set_title('Sentiment Analysis Comparison by Pipeline')
+    ax.set_ylabel('Ratio of Comments (0.0 to 1.0)')
+    ax.set_title('Normalized Sentiment Analysis Comparison by Pipeline')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend(title="Pipeline Mode")
 
-    ax.bar_label(rects1, padding=3)
-    ax.bar_label(rects2, padding=3)
-    ax.bar_label(rects3, padding=3)
-    ax.bar_label(rects4, padding=3)
+    # Set y-axis to be from 0 to 1 (for ratios)
+    ax.set_ylim(0, 1.0) 
+
+    # Format bar labels as percentages
+    ax.bar_label(rects1, padding=3, fmt='%.2f')
+    ax.bar_label(rects2, padding=3, fmt='%.2f')
+    ax.bar_label(rects3, padding=3, fmt='%.2f')
+    ax.bar_label(rects4, padding=3, fmt='%.2f')
 
     fig.tight_layout()
     
-    plt.savefig(outdir / "combined_sentiment_comparison.png", dpi=150, bbox_inches="tight")
-    print(f"\n✅ Combined comparison plot saved to {outdir}/")
+    plt.savefig(outdir / "combined_sentiment_comparison_RATIO.png", dpi=150, bbox_inches="tight")
+    print(f"\n✅ Combined ratio comparison plot saved to {outdir}/")
     plt.show()
-
 
 def main():
     if not YOUTUBE_API_KEY:
