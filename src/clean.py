@@ -45,8 +45,8 @@ def filter_relevant_comments(comments: List[str]) -> List[str]:
         # --- THIS IS THE NEW LINE ---
         # Filter out any comment with non-Latin (non-ASCII) characters
         # This keeps English/Romanized Hindi and filters out Devanagari, etc.
-        if not c2.isascii():
-            continue
+        # if not c2.isascii():
+        #     continue
         # --- END OF NEW LINE ---
 
         if _LINK_RE.search(c2):
