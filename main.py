@@ -5,11 +5,13 @@ from googleapiclient.errors import HttpError
 
 from src.config import YOUTUBE_API_KEY
 from src.yt_fetch import fetch_comments
-from src.clean import filter_relevant_comments
+# --- MODIFIED: Import the new functions ---
+from src.clean import filter_relevant_comments, detect_lang, translate
 from src.analysis import score_comments
 
 
 def plot_results(res, outdir: Path):
+    # ... (This function remains unchanged) ...
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Histogram of polarity
@@ -35,15 +37,15 @@ def plot_results(res, outdir: Path):
 
 def main():
     if not YOUTUBE_API_KEY:
-        print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
+        print(" Missing API key. Put ⁠ YOUTUBE_API_KEY=... ⁠ in your .env and run again.")
         return
 
     # 👇 ask for inputs interactively
-    video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    video_url = "https://www.youtube.com/watch?v=WzvURhaDZqI&pp=ygUHY2FtcHVzeNIHCQkDCgGHKiGM7w%3D%3D"
     max_comments = 200
     preview = 8
 
-    print("\n[1/4] Fetching comments…")
+    print("\n[1/5] Fetching comments…") # <-- Renumbered to 5 steps
     try:
         raw = fetch_comments(YOUTUBE_API_KEY, video_url, max_total=max_comments)
     except HttpError as e:
@@ -53,27 +55,53 @@ def main():
         print(f" Unexpected error: {e}")
         return
 
-    print(f"   fetched: {len(raw)}")
+    print(f"    fetched: {len(raw)}")
 
-    print("[2/4] Cleaning comments…")
+    print("[2/5] Cleaning comments…") # <-- Renumbered
     cleaned = filter_relevant_comments(raw)
-    print(f"   kept: {len(cleaned)}")
+    print(f"    kept: {len(cleaned)}")
 
     if not cleaned:
         print("No usable comments after cleaning.")
         return
 
-    print("[3/4] Scoring sentiment…")
-    res = score_comments(cleaned)
+    # --- NEW STEP: Language Detection & Translation ---
+    print("[3/5] Translating Romanized Hindi comments…")
+    final_comments_for_analysis = []
+    hindi_count = 0
+    for comment in cleaned:
+        lang = detect_lang(comment)
+        if lang == "hindi":
+            hindi_count += 1
+            # Translate Hindi comment to English
+            translated_comment = translate(comment)
+            if translated_comment: # Only add if translation was successful
+                final_comments_for_analysis.append(translated_comment)
+        else:
+            # Keep the English comment as is
+            final_comments_for_analysis.append(comment)
+    
+    print(f"    found and translated {hindi_count} Hindi comments.")
+    print(f"    total comments for analysis: {len(final_comments_for_analysis)}")
+    # --- END OF NEW STEP ---
+
+    if not final_comments_for_analysis:
+        print("No usable comments left after translation step.")
+        return
+
+    print("[4/5] Scoring sentiment…") # <-- Renumbered
+    # --- MODIFIED: Use the newly translated list ---
+    res = score_comments(final_comments_for_analysis)
     avg = res["avg"]
     label = "Positive" if avg > 0.05 else "Negative" if avg < -0.05 else "Neutral"
 
-    print("[4/4] Summary:")
-    print(f"   Average polarity: {avg:.4f} → {label}")
-    print(f"   Counts → +:{len(res['positive'])}  0:{len(res['neutral'])}  -:{len(res['negative'])}")
+    print("[5/5] Summary:") # <-- Renumbered
+    print(f"    Average polarity: {avg:.4f} → {label}")
+    print(f"    Counts → +:{len(res['positive'])}  0:{len(res['neutral'])}  -:{len(res['negative'])}")
 
-    print("\nPreview of cleaned comments:")
-    for i, c in enumerate(cleaned[:preview], start=1):
+    print("\nPreview of final comments (after translation):")
+    # --- MODIFIED: Show the final translated comments ---
+    for i, c in enumerate(final_comments_for_analysis[:preview], start=1):
         one = " ".join(c.splitlines()).strip()
         print(f"{i:>2}. {one[:200]}")
 
@@ -83,5 +111,5 @@ def main():
     print(f"✅ Plots saved to {outdir}/")
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
