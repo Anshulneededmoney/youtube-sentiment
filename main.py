@@ -42,7 +42,7 @@ def main():
 
     # 👇 ask for inputs interactively
     video_url = "https://www.youtube.com/watch?v=WzvURhaDZqI&pp=ygUHY2FtcHVzeNIHCQkDCgGHKiGM7w%3D%3D"
-    max_comments = 200
+    max_comments = 2000
     preview = 8
 
     print("\n[1/5] Fetching comments…") # <-- Renumbered to 5 steps
