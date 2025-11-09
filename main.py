@@ -57,7 +57,6 @@ def plot_combined_results(results: dict, outdir: Path, title: str, filename: str
     
     fig, ax = plt.subplots(figsize=(15, 8))
     
-    # Create the bars
     rects = []
     bar_positions = [-1.5, -0.5, 0.5, 1.5]
     for i, mode in enumerate(modes):
@@ -65,7 +64,6 @@ def plot_combined_results(results: dict, outdir: Path, title: str, filename: str
         rects.append(r)
 
     ax.set_ylabel('Ratio of Comments (0.0 to 1.0)')
-    # --- 2. USE DYNAMIC TITLE ---
     ax.set_title(f'Normalized Sentiment Comparison: {title}')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
@@ -77,55 +75,9 @@ def plot_combined_results(results: dict, outdir: Path, title: str, filename: str
 
     fig.tight_layout()
     
-    # --- 3. USE DYNAMIC FILENAME ---
     plt.savefig(outdir / filename, dpi=150, bbox_inches="tight")
     print(f"\n✅ Comparison plot saved to {outdir / filename}")
     plt.show()
-
-
-def run_all_scenarios(scoring_function, cleaned_comments):
-    """
-    A helper function to run the 4 analysis scenarios
-    using the provided scoring_function.
-    """
-    all_results = {}
-
-    # --- Mode 1: Full Pipeline (With Translation) ---
-    print("\n--- Mode 1: Full (Translate Hindi) ---")
-    full_comments = []
-    hindi_count = 0
-    for c in cleaned_comments:
-        lang = detect_lang(c)
-        if lang == "hindi":
-            hindi_count += 1
-            full_comments.append(translate(c))
-        else:
-            full_comments.append(c)
-    res_full = scoring_function(full_comments)
-    all_results["Full (Translate)"] = res_full
-    print(f"    Analyzed {len(full_comments)} comments ({hindi_count} translated).")
-
-    # --- Mode 2: Naive Pipeline (No Translation) ---
-    print("\n--- Mode 2: Naive (No Translate) ---")
-    res_naive = scoring_function(cleaned_comments)
-    all_results["Naive (No Translate)"] = res_naive
-    print(f"    Analyzed {len(cleaned_comments)} comments (untranslated).")
-
-    # --- Mode 3: English-Only (Filter out Hindi) ---
-    print("\n--- Mode 3: English-Only (Filter Hindi) ---")
-    eng_only_comments = [c for c in cleaned_comments if detect_lang(c) == "english"]
-    res_eng_only = scoring_function(eng_only_comments)
-    all_results["English-Only"] = res_eng_only
-    print(f"    Analyzed {len(eng_only_comments)} comments (Hindi comments ignored).")
-
-    # --- Mode 4: Hindi-Only (Filter out English) ---
-    print("\n--- Mode 4: Hindi-Only (Filter English) ---")
-    hin_only_comments = [translate(c) for c in cleaned_comments if detect_lang(c) == "hindi"]
-    res_hin_only = scoring_function(hin_only_comments)
-    all_results["Hindi-Only (Translated)"] = res_hin_only
-    print(f"    Analyzed {len(hin_only_comments)} comments (English comments ignored).")
-    
-    return all_results
 
 
 def main():
@@ -133,12 +85,12 @@ def main():
         print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    video_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Use your test URL
-    max_comments = 200
+    video_url = "https://www.youtube.com/watch?v=7gn3wh7_ffA" # Use your test URL
+    max_comments = 500
     outdir = Path("outputs")
     
-    # --- [STEP 1/3] FETCH AND CLEAN (Run once) ---
-    print("\n[1/3] Fetching and Cleaning Comments…")
+    # --- [STEP 1/4] FETCH AND CLEAN (Run once) ---
+    print("\n[1/4] Fetching and Cleaning Comments…")
     try:
         raw = fetch_comments(YOUTUBE_API_KEY, video_url, max_total=max_comments)
     except HttpError as e:
@@ -154,24 +106,69 @@ def main():
         return
     print(f"    Fetched: {len(raw)}, Kept after cleaning: {len(cleaned)}")
 
-    # --- [STEP 2/3] RUN EXPERIMENTS FOR MODEL 1 (ROBERTA) ---
+    # --- [STEP 2/4] PRE-PROCESS & BUILD SCENARIO LISTS (THE OPTIMIZATION) ---
+    # We build all 4 lists in a single, efficient loop.
+    
+    print("\n[2/4] Detecting language and translating (ONE TIME PASS)...")
+    
+    comments_full_translate = []
+    comments_naive = cleaned # This is just the original list
+    comments_eng_only = []
+    comments_hin_only_translated = []
+    
+    hindi_count = 0
+    
+    # This single loop does all the slow work (LLM detection, API calls)
+    for c in cleaned:
+        lang = detect_lang(c)
+        if lang == "hindi":
+            hindi_count += 1
+            translated_c = translate(c)
+            
+            # Add to lists that use the translated version
+            comments_full_translate.append(translated_c)
+            comments_hin_only_translated.append(translated_c)
+        else: # lang is "english"
+            # Add to lists that use the original English version
+            comments_full_translate.append(c)
+            comments_eng_only.append(c)
+
+    print(f"    Analyzed {len(cleaned)} comments, found {hindi_count} Hindi comments.")
+
+    # --- [STEP 3/4] RUN EXPERIMENTS (This part is fast) ---
+    print("\n[3/4] Running sentiment analysis on all 8 scenarios...")
+    
+    all_results_roberta = {}
+    all_results_distilbert = {}
+
+    # --- Run RoBERTa on the 4 pre-processed lists ---
     if score_roberta:
-        print("\n" + "="*50)
-        print("   RUNNING EXPERIMENTS FOR RoBERTa (Multilingual)")
-        print("="*50)
-        roberta_results = run_all_scenarios(score_roberta, cleaned)
-        plot_combined_results(roberta_results, outdir, 
+        print("--- Scoring with RoBERTa (Multilingual) ---")
+        all_results_roberta["Full (Translate)"] = score_roberta(comments_full_translate)
+        all_results_roberta["Naive (No Translate)"] = score_roberta(comments_naive)
+        all_results_roberta["English-Only"] = score_roberta(comments_eng_only)
+        all_results_roberta["Hindi-Only (Translated)"] = score_roberta(comments_hin_only_translated)
+
+    # --- Run DistilBERT on the 4 pre-processed lists ---
+    if score_distilbert:
+        print("--- Scoring with DistilBERT (English-Only) ---")
+        all_results_distilbert["Full (Translate)"] = score_distilbert(comments_full_translate)
+        all_results_distilbert["Naive (No Translate)"] = score_distilbert(comments_naive)
+        all_results_distilbert["English-Only"] = score_distilbert(comments_eng_only)
+        all_results_distilbert["Hindi-Only (Translated)"] = score_distilbert(comments_hin_only_translated)
+
+    # --- [STEP 4/4] PLOT RESULTS ---
+    print("\n[4/4] Generating comparison plots...")
+
+    if score_roberta:
+        plot_combined_results(all_results_roberta, outdir, 
                               "RoBERTa (Multilingual)", "comparison_roberta_ratio.png")
     
-    # --- [STEP 3/3] RUN EXPERIMENTS FOR MODEL 2 (DISTILBERT) ---
     if score_distilbert:
-        print("\n" + "="*50)
-        print("   RUNNING EXPERIMENTS FOR DistilBERT (English-Only)")
-        print("="*50)
-        distilbert_results = run_all_scenarios(score_distilbert, cleaned)
-        plot_combined_results(distilbert_results, outdir, 
+        plot_combined_results(all_results_distilbert, outdir, 
                                "DistilBERT (English-Only)", "comparison_distilbert_ratio.png")
 
 
 if __name__ == "__main__":
+    main()
     main()
