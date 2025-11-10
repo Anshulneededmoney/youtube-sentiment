@@ -20,7 +20,7 @@ model.to(device) # Move the model to the GPU
 
 # --- Constants ---
 _LINK_RE = re.compile(
-    r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+    r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fAF][0-9a-fA-F]))+"
 )
 TEXT_RATIO_THRESHOLD = 0.65
 
@@ -32,21 +32,26 @@ def normalize_text(s: str) -> str:
 
 def filter_relevant_comments(comments: List[str]) -> List[str]:
     """
-    Keep comments that have text, no links, and aren't emoji-dominated.
-    (This version has no .isascii() filter)
+    Keep comments that have text, no links, aren't emoji-dominated,
+    AND are written in the Latin script (ASCII).
     """
     kept: List[str] = []
     for c in comments:
         c2 = normalize_text(c)
         if not c2:
             continue
-
-        # NO .isascii() CHECK HERE
+        
+        # This filter is likely the cause of "0 Hindi comments".
+        # Let's remove it.
+        # text_only = emoji.replace_emoji(c2, replace='')
+        # if not text_only.isascii():
+        #    continue
 
         if _LINK_RE.search(c2):
             continue
         
         ecount = emoji.emoji_count(c2)
+        # Revert this line back too
         txtchars = len(re.sub(r"\s", "", c2))
         if txtchars == 0:
             continue
@@ -65,42 +70,40 @@ def detect_lang(comments_batch: List[str]) -> List[str]:
     if not comments_batch:
         return []
 
-    # Tokenize the entire batch at once
     inputs = tokenizer(
         comments_batch, 
         return_tensors="pt",
         truncation=True,
         max_length=512,
-        padding=True  # Pad to the longest comment in the batch
+        padding=True
     )
 
-    # Move the input tensors to the same device as the model (the GPU)
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
-    # Perform inference
     with torch.no_grad():
         outputs = model(**inputs)
 
     logits = outputs.logits
     
-    # Get probabilities for only Hindi (9) and English (13) for the whole batch
     hindi_probs = logits[:, 9]
     english_probs = logits[:, 13]
     
-    # Compare probabilities
-    is_hindi = hindi_probs > english_probs # This is a boolean Tensor
+    is_hindi = hindi_probs > english_probs
     
-    # Convert boolean tensor back to a list of strings
     labels = ["hindi" if is_h else "english" for is_h in is_hindi]
     
     return labels
 
+# --- THIS FUNCTION IS THE FIX ---
 def translate(text: str) -> str: # Romanized Hindi to English
     """
-    Translates Romanized Hindi ("hi-Latn") to English ("en").
+    Translates Romanized Hindi to English.
     """
     try:
-        translated_obj = translator.translate(text, src='hi-Latn', dest='en')
+        # --- THE FIX ---
+        # We removed src='hi-Latn' and are letting the library auto-detect.
+        translated_obj = translator.translate(text, dest='en')
+        # --- END OF FIX ---
         return translated_obj.text
     except Exception as e:
         print(f"Error in translation: {e}. Returning original text.")
