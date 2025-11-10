@@ -86,7 +86,7 @@ def main():
         print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    video_url = "https://www.youtube.com/watch?v=z5d-35SRCUw" # Hindi trailer
+    video_url = "https://www.youtube.com/watch?v=-Gac6Dr6gF4" # Hindi trailer
     max_comments = 500
     outdir = Path("outputs")
     
