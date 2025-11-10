@@ -87,7 +87,7 @@ def main():
         return
 
     video_url = "https://www.youtube.com/watch?v=z5d-35SRCUw" # Hindi trailer
-    max_comments = 200
+    max_comments = 500
     outdir = Path("outputs")
     
     # --- [STEP 1/4] FETCH AND CLEAN (Run once) ---
