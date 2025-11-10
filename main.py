@@ -1,3 +1,5 @@
+#main.py
+
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -7,7 +9,7 @@ from src.config import YOUTUBE_API_KEY
 from src.yt_fetch import fetch_comments
 from src.clean import filter_relevant_comments, detect_lang, translate
 
-# --- (Imports for both analysis models) ---
+# --- 1. IMPORT BOTH SCORING FUNCTIONS ---
 try:
     from src.analysis_roberta import score_comments as score_roberta
     print("Successfully imported RoBERTa (multilingual) model.")
@@ -23,8 +25,8 @@ except ImportError:
     score_distilbert = None
 
 
-# --- (get_counts and plot_combined_results functions are UNCHANGED) ---
 def get_counts(res: dict) -> list:
+    """Helper function to extract sentiment counts from a result dictionary."""
     return [
         len(res.get("positive", [])),
         len(res.get("neutral", [])),
@@ -32,9 +34,16 @@ def get_counts(res: dict) -> list:
     ]
 
 def plot_combined_results(results: dict, outdir: Path, title: str, filename: str):
+    """
+    Plots a grouped bar chart comparing all four experimental modes
+    using RATIOS instead of raw counts.
+    """
     outdir.mkdir(parents=True, exist_ok=True)
+    
     labels = ['Positive', 'Neutral', 'Negative']
     modes = list(results.keys())
+    
+    # Calculate ratios
     ratios = {}
     for mode in modes:
         counts = get_counts(results[mode])
@@ -43,23 +52,30 @@ def plot_combined_results(results: dict, outdir: Path, title: str, filename: str
             ratios[mode] = [0.0, 0.0, 0.0]
         else:
             ratios[mode] = [c / total for c in counts]
+    
     x = np.arange(len(labels))
     width = 0.2
+    
     fig, ax = plt.subplots(figsize=(15, 8))
+    
     rects = []
     bar_positions = [-1.5, -0.5, 0.5, 1.5]
     for i, mode in enumerate(modes):
         r = ax.bar(x + bar_positions[i]*width, ratios[mode], width, label=mode)
         rects.append(r)
+
     ax.set_ylabel('Ratio of Comments (0.0 to 1.0)')
     ax.set_title(f'Normalized Sentiment Comparison: {title}')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend(title="Pipeline Mode")
     ax.set_ylim(0, 1.0) 
+
     for r in rects:
         ax.bar_label(r, padding=3, fmt='%.2f')
+
     fig.tight_layout()
+    
     plt.savefig(outdir / filename, dpi=150, bbox_inches="tight")
     print(f"\n✅ Comparison plot saved to {outdir / filename}")
     plt.show()
@@ -70,7 +86,7 @@ def main():
         print(" Missing API key. Put `YOUTUBE_API_KEY=...` in your .env and run again.")
         return
 
-    video_url = "https://www.youtube.com/watch?v=7gn3wh7_ffA" # Hindi trailer
+    video_url = "https://www.youtube.com/watch?v=z5d-35SRCUw" # Hindi trailer
     max_comments = 200
     outdir = Path("outputs")
     
@@ -81,6 +97,9 @@ def main():
     except HttpError as e:
         print(f" YouTube API error: {e}")
         return
+    except Exception as e:
+        print(f" Unexpected error: {e}")
+        return
     
     cleaned = filter_relevant_comments(raw)
     if not cleaned:
@@ -88,32 +107,23 @@ def main():
         return
     print(f"    Fetched: {len(raw)}, Kept after cleaning: {len(cleaned)}")
 
-    # --- [DEBUG] PRINT FIRST 20 CLEANED COMMENTS ---
-    print("\n--- [DEBUG] First 20 Cleaned Comments (for visual inspection) ---")
-    for i, c in enumerate(cleaned[:20]):
-        print(f"  {i+1}. {c[:120]}...") # Print first 120 chars
-    print("-----------------------------------------------------------------\n")
-
-    # --- [STEP 2/4] PRE-PROCESS & BUILD SCENARIO LISTS ---
+    # --- [STEP 2/4] PRE-PROCESS & BUILD SCENARIO LISTS (THE OPTIMIZATION) ---
+    
     print("\n[2/4] Detecting language (BATCHED)...")
     
     all_languages = detect_lang(cleaned)
-    print("    ...Detection complete.")
-
-    print("\n[3/4] Building Scenarios & [DEBUG] Language Detection Results...")
+    
+    print("    ...Detection complete. Translating...")
     
     comments_full_translate = []
-    comments_naive = cleaned
+    comments_naive = cleaned # This is just the original list
     comments_eng_only = []
     comments_hin_only_translated = []
     
     hindi_count = 0
     
-    # --- [DEBUG] THIS LOOP NOW PRINTS THE LANGUAGE FOR EVERY COMMENT ---
+    # This single loop does all the slow work (API calls)
     for comment, lang in zip(cleaned, all_languages):
-        # This will show you exactly what the model detected
-        print(f"    [{lang.upper()}] {comment[:120]}...")
-
         if lang == "hindi":
             hindi_count += 1
             translated_c = translate(comment) 
@@ -123,11 +133,10 @@ def main():
             comments_full_translate.append(comment)
             comments_eng_only.append(comment)
 
-    print(f"\n    Analyzed {len(cleaned)} comments, found {hindi_count} Hindi comments.")
-    print("-----------------------------------------------------------------\n")
+    print(f"    Analyzed {len(cleaned)} comments, found {hindi_count} Hindi comments.")
 
-    # --- [STEP 4/4] RUN EXPERIMENTS (This part is fast) ---
-    print("\n[4/4] Running sentiment analysis on all 8 scenarios...")
+    # --- [STEP 3/4] RUN EXPERIMENTS (This part is fast) ---
+    print("\n[3/4] Running sentiment analysis on all 8 scenarios...")
     
     all_results_roberta = {}
     all_results_distilbert = {}
@@ -146,8 +155,8 @@ def main():
         all_results_distilbert["English-Only"] = score_distilbert(comments_eng_only)
         all_results_distilbert["Hindi-Only (Translated)"] = score_distilbert(comments_hin_only_translated)
 
-    # --- [STEP 5/5] PLOT RESULTS --- (Renumbered)
-    print("\n[5/5] Generating comparison plots...")
+    # --- [STEP 4/4] PLOT RESULTS ---
+    print("\n[4/4] Generating comparison plots...")
 
     if score_roberta:
         plot_combined_results(all_results_roberta, outdir, 
